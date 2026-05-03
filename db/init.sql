@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS received_messages (
+    id BIGSERIAL PRIMARY KEY,
+    message_id VARCHAR(100) NOT NULL UNIQUE,
+    payload JSONB NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
