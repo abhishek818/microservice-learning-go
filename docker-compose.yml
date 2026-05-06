@@ -31,5 +31,23 @@ services:
     ports:
       - "9092:9092"
 
+  microservice2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: microservice2
+    container_name: microservice2
+    environment:
+      HTTP_PORT: 8082
+      DATABASE_URL: postgres://appuser:apppassword@postgres:5432/reliable_delivery?sslmode=disable
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - reliable_network
+
 volumes:
   postgres_data:
