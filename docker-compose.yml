@@ -49,5 +49,27 @@ services:
     networks:
       - reliable_network
 
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: producer
+    container_name: test_producer
+    environment:
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: reliable-messages
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - reliable_network
+    profiles:
+      - test
+
 volumes:
   postgres_data:
+
+networks:
+  reliable_network:
+    driver: bridge
