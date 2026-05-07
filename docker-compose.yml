@@ -49,6 +49,28 @@ services:
     networks:
       - reliable_network
 
+  microservice1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: microservice1
+    container_name: microservice1
+    environment:
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: reliable-messages
+      KAFKA_GROUP_ID: reliable-delivery-group
+      MICROSERVICE2_URL: http://microservice2:8082/api/v1/messages
+      RETRY_INTERVAL_SECONDS: 10
+      HTTP_TIMEOUT_SECONDS: 5
+    depends_on:
+      kafka:
+        condition: service_healthy
+      microservice2:
+        condition: service_started
+    networks:
+      - reliable_network
+
   producer:
     build:
       context: .
