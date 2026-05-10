@@ -7,8 +7,6 @@ reliable message delivery
 
 This project implements a reliable message delivery system using Golang.
 
-The original assignment asks for two microservices where:
-
 - Microservice-1 consumes messages from a FIFO queue.
 - Microservice-1 sends each message to Microservice-2 using a POST API.
 - If the API call fails, Microservice-1 retries every 10 seconds.
@@ -16,7 +14,6 @@ The original assignment asks for two microservices where:
 - Messages should not be lost.
 - Microservice-2 exposes a POST API to receive and persist messages.
 
-Although the assignment mentions Spring Boot, this implementation is done in Golang.
 
 ## 2. Tech Stack
 
