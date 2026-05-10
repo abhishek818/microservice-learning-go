@@ -26,6 +26,19 @@ type APIResponse struct {
 	Message string `json:"message"`
 }
 
+type messageStore interface {
+	SaveMessage(ctx context.Context, messageID string, payload json.RawMessage) (storeResult, error)
+}
+
+type storeResult struct {
+	ID       int64
+	Inserted bool
+}
+
+type postgresMessageStore struct {
+	dbPool *pgxpool.Pool
+}
+
 func main() {
 	logger := log.New(os.Stdout, "[microservice-2] ", log.LstdFlags|log.Lmicroseconds|log.Lshortfile)
 	httpPort := getEnv("HTTP_PORT", "8082")
@@ -45,18 +58,8 @@ func main() {
 
 	logger.Println("connected to database successfully")
 
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, APIResponse{
-			Status:  "success",
-			Message: "microservice-2 is healthy",
-		})
-	})
-
-	mux.HandleFunc("POST /api/v1/messages/", func(w http.ResponseWriter, r *http.Request) {
-		handleReceiveMessage(w, r, dbPool, logger)
-	})
+	store := postgresMessageStore{dbPool: dbPool}
+	mux := newMux(store, logger)
 
 	server := &http.Server{
 		Addr:         ":" + httpPort,
@@ -77,7 +80,24 @@ func main() {
 	waitForShutdown(server, logger)
 }
 
-func handleReceiveMessage(w http.ResponseWriter, r *http.Request, dbPool *pgxpool.Pool, logger *log.Logger) {
+func newMux(store messageStore, logger *log.Logger) *http.ServeMux {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, APIResponse{
+			Status:  "success",
+			Message: "microservice-2 is healthy",
+		})
+	})
+
+	mux.HandleFunc("POST /api/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		handleReceiveMessage(w, r, store, logger)
+	})
+
+	return mux
+}
+
+func handleReceiveMessage(w http.ResponseWriter, r *http.Request, store messageStore, logger *log.Logger) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, APIResponse{
 			Status:  "error",
@@ -120,32 +140,7 @@ func handleReceiveMessage(w http.ResponseWriter, r *http.Request, dbPool *pgxpoo
 		return
 	}
 
-	var messageID int64
-
-	query := `
-		INSERT INTO received_messages (message_id, payload)
-		VALUES ($1, $2::jsonb)
-		ON CONFLICT (message_id) DO NOTHING
-		RETURNING id;
-	`
-
-	err := dbPool.QueryRow(
-		r.Context(),
-		query,
-		request.MessageID,
-		string(request.Payload),
-	).Scan(&messageID)
-
-	if errors.Is(err, pgx.ErrNoRows) {
-		logger.Printf("duplicate message ignored safely: message_id=%s", request.MessageID)
-
-		writeJSON(w, http.StatusOK, APIResponse{
-			Status:  "success",
-			Message: "message already processed",
-		})
-		return
-	}
-
+	result, err := store.SaveMessage(r.Context(), request.MessageID, request.Payload)
 	if err != nil {
 		logger.Printf("failed to save message: message_id=%s error=%v", request.MessageID, err)
 
@@ -156,12 +151,51 @@ func handleReceiveMessage(w http.ResponseWriter, r *http.Request, dbPool *pgxpoo
 		return
 	}
 
-	logger.Printf("message saved successfully: id=%d message_id=%s", messageID, request.MessageID)
+	if !result.Inserted {
+		logger.Printf("duplicate message ignored safely: message_id=%s", request.MessageID)
+
+		writeJSON(w, http.StatusOK, APIResponse{
+			Status:  "success",
+			Message: "message already processed",
+		})
+		return
+	}
+
+	logger.Printf("message saved successfully: id=%d message_id=%s", result.ID, request.MessageID)
 
 	writeJSON(w, http.StatusOK, APIResponse{
 		Status:  "success",
 		Message: "message received successfully",
 	})
+}
+
+func (s postgresMessageStore) SaveMessage(ctx context.Context, messageID string, payload json.RawMessage) (storeResult, error) {
+	const query = `
+		INSERT INTO received_messages (message_id, payload)
+		VALUES ($1, $2::jsonb)
+		ON CONFLICT (message_id) DO NOTHING
+		RETURNING id;
+	`
+
+	var savedMessageID int64
+
+	err := s.dbPool.QueryRow(
+		ctx,
+		query,
+		messageID,
+		string(payload),
+	).Scan(&savedMessageID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return storeResult{Inserted: false}, nil
+	}
+	if err != nil {
+		return storeResult{}, err
+	}
+
+	return storeResult{
+		ID:       savedMessageID,
+		Inserted: true,
+	}, nil
 }
 
 func writeJSON(w http.ResponseWriter, statusCode int, response APIResponse) {
