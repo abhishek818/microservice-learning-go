@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"microservice-go/internal/config"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -41,12 +43,11 @@ type postgresMessageStore struct {
 
 func main() {
 	logger := log.New(os.Stdout, "[microservice-2] ", log.LstdFlags|log.Lmicroseconds|log.Lshortfile)
-	httpPort := getEnv("HTTP_PORT", "8082")
 
-	databaseURL := getEnv("DATABASE_URL", "postgres://appuser:apppassword@localhost:5432/reliable_delivery?sslmode=disable")
+	serviceConfig := config.LoadMicroservice2()
 	ctx := context.Background()
 
-	dbPool, err := pgxpool.New(ctx, databaseURL)
+	dbPool, err := pgxpool.New(ctx, serviceConfig.DatabaseURL)
 	if err != nil {
 		logger.Fatalf("failed to create database pool: %v", err)
 	}
@@ -62,7 +63,7 @@ func main() {
 	mux := newMux(store, logger)
 
 	server := &http.Server{
-		Addr:         ":" + httpPort,
+		Addr:         ":" + serviceConfig.HTTPPort,
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
@@ -70,7 +71,7 @@ func main() {
 	}
 
 	go func() {
-		logger.Printf("microservice-2 started on port %s", httpPort)
+		logger.Printf("microservice-2 started on port %s", serviceConfig.HTTPPort)
 
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatalf("server failed: %v", err)
@@ -225,14 +226,4 @@ func waitForShutdown(server *http.Server, logger *log.Logger) {
 	}
 
 	logger.Println("server stopped gracefully")
-}
-
-func getEnv(key string, fallback string) string {
-	value := os.Getenv(key)
-
-	if value == "" {
-		return fallback
-	}
-
-	return value
 }

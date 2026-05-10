@@ -6,27 +6,25 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"time"
+
+	"microservice-go/internal/config"
+	"microservice-go/internal/model"
 
 	"github.com/segmentio/kafka-go"
 )
 
-type QueueMessage struct {
-	MessageID string      `json:"message_id"`
-	Payload   interface{} `json:"payload"`
-}
-
 func main() {
 	logger := log.New(os.Stdout, "[producer] ", log.LstdFlags|log.Lmicroseconds|log.Lshortfile)
 
-	kafkaBroker := getEnv("KAFKA_BROKER", "localhost:9092")
-	kafkaTopic := getEnv("KAFKA_TOPIC", "reliable-messages")
-	messageCount := getEnvAsInt("MESSAGE_COUNT", 5)
+	producerConfig, err := config.LoadProducer()
+	if err != nil {
+		logger.Fatalf("invalid configuration: %v", err)
+	}
 
 	writer := kafka.NewWriter(kafka.WriterConfig{
-		Brokers:  []string{kafkaBroker},
-		Topic:    kafkaTopic,
+		Brokers:  []string{producerConfig.KafkaBroker},
+		Topic:    producerConfig.KafkaTopic,
 		Balancer: &kafka.Hash{},
 	})
 
@@ -36,22 +34,27 @@ func main() {
 		}
 	}()
 
-	logger.Printf("producer started. broker=%s topic=%s message_count=%d", kafkaBroker, kafkaTopic, messageCount)
+	logger.Printf("producer started. broker=%s topic=%s message_count=%d", producerConfig.KafkaBroker, producerConfig.KafkaTopic, producerConfig.MessageCount)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	for i := 1; i <= messageCount; i++ {
+	for i := 1; i <= producerConfig.MessageCount; i++ {
 		messageID := fmt.Sprintf("msg-%03d", i)
 
-		queueMessage := QueueMessage{
+		payloadBytes, err := json.Marshal(map[string]interface{}{
+			"customer_id": i,
+			"amount":      i * 100,
+			"event_type":  "payment_created",
+			"created_at":  time.Now().UTC().Format(time.RFC3339),
+		})
+		if err != nil {
+			logger.Fatalf("failed to marshal payload for message_id=%s error=%v", messageID, err)
+		}
+
+		queueMessage := model.QueueMessage{
 			MessageID: messageID,
-			Payload: map[string]interface{}{
-				"customer_id": i,
-				"amount":      i * 100,
-				"event_type":  "payment_created",
-				"created_at":  time.Now().UTC().Format(time.RFC3339),
-			},
+			Payload:   payloadBytes,
 		}
 
 		messageBytes, err := json.Marshal(queueMessage)
@@ -73,27 +76,4 @@ func main() {
 	}
 
 	logger.Println("all messages published successfully")
-}
-
-func getEnv(key string, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-
-	return value
-}
-
-func getEnvAsInt(key string, fallback int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-
-	parsedValue, err := strconv.Atoi(value)
-	if err != nil {
-		return fallback
-	}
-
-	return parsedValue
 }

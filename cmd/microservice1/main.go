@@ -11,45 +11,39 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"microservice-go/internal/config"
+	"microservice-go/internal/model"
+
 	"github.com/segmentio/kafka-go"
 )
-
-type QueueMessage struct {
-	MessageID string          `json:"message_id"`
-	Payload   json.RawMessage `json:"payload"`
-}
 
 func main() {
 	logger := log.New(os.Stdout, "[microservice-1] ", log.LstdFlags|log.Lmicroseconds|log.Lshortfile)
 
-	kafkaBroker := getEnv("KAFKA_BROKER", "localhost:9092")
-	kafkaTopic := getEnv("KAFKA_TOPIC", "reliable-messages")
-	kafkaGroupID := getEnv("KAFKA_GROUP_ID", "reliable-delivery-group")
-	microservice2URL := getEnv("MICROSERVICE2_URL", "http://localhost:8082/api/v1/messages")
-
-	retryInterval := time.Duration(getEnvAsInt("RETRY_INTERVAL_SECONDS", 10)) * time.Second
-	httpTimeout := time.Duration(getEnvAsInt("HTTP_TIMEOUT_SECONDS", 5)) * time.Second
+	serviceConfig, err := config.LoadMicroservice1()
+	if err != nil {
+		logger.Fatalf("invalid configuration: %v", err)
+	}
 
 	logger.Printf("starting microservice-1")
-	logger.Printf("kafka_broker=%s", kafkaBroker)
-	logger.Printf("kafka_topic=%s", kafkaTopic)
-	logger.Printf("kafka_group_id=%s", kafkaGroupID)
-	logger.Printf("microservice2_url=%s", microservice2URL)
-	logger.Printf("retry_interval=%s", retryInterval)
-	logger.Printf("http_timeout=%s", httpTimeout)
+	logger.Printf("kafka_broker=%s", serviceConfig.KafkaBroker)
+	logger.Printf("kafka_topic=%s", serviceConfig.KafkaTopic)
+	logger.Printf("kafka_group_id=%s", serviceConfig.KafkaGroupID)
+	logger.Printf("microservice2_url=%s", serviceConfig.Microservice2URL)
+	logger.Printf("retry_interval=%s", serviceConfig.RetryInterval)
+	logger.Printf("http_timeout=%s", serviceConfig.HTTPTimeout)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:     []string{kafkaBroker},
-		Topic:       kafkaTopic,
-		GroupID:     kafkaGroupID,
+		Brokers:     []string{serviceConfig.KafkaBroker},
+		Topic:       serviceConfig.KafkaTopic,
+		GroupID:     serviceConfig.KafkaGroupID,
 		MinBytes:    1,
 		MaxBytes:    10e6,
 		StartOffset: kafka.FirstOffset,
@@ -62,7 +56,7 @@ func main() {
 	}()
 
 	httpClient := &http.Client{
-		Timeout: httpTimeout,
+		Timeout: serviceConfig.HTTPTimeout,
 	}
 
 	logger.Println("microservice-1 started successfully and waiting for messages")
@@ -93,10 +87,10 @@ func main() {
 		delivered := deliverWithUnlimitedRetry(
 			ctx,
 			httpClient,
-			microservice2URL,
+			serviceConfig.Microservice2URL,
 			message.Value,
 			messageID,
-			retryInterval,
+			serviceConfig.RetryInterval,
 			logger,
 		)
 
@@ -203,7 +197,7 @@ func postMessage(
 }
 
 func extractMessageID(messageBytes []byte) string {
-	var queueMessage QueueMessage
+	var queueMessage model.QueueMessage
 
 	if err := json.Unmarshal(messageBytes, &queueMessage); err != nil {
 		return "unknown"
@@ -216,27 +210,4 @@ func extractMessageID(messageBytes []byte) string {
 	}
 
 	return queueMessage.MessageID
-}
-
-func getEnv(key string, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-
-	return value
-}
-
-func getEnvAsInt(key string, fallback int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-
-	parsedValue, err := strconv.Atoi(value)
-	if err != nil {
-		return fallback
-	}
-
-	return parsedValue
 }
